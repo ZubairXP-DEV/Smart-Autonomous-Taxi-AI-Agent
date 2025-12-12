@@ -28,6 +28,9 @@ app = dash.Dash(
     suppress_callback_exceptions=True
 )
 
+# Expose server for deployment platforms (Render, Heroku, etc.)
+server = app.server
+
 # Model parameters with new features
 model_params = {
     "width": 30,
@@ -2028,6 +2031,6 @@ def export_json(n_clicks):
     except:
         return None
 
-if __name__ == '__main__':
-    app.run(debug=True, port=8050, host='127.0.0.1')
+# Note: This file is imported by dashboard_main.py
+# Do not run app directly - use dashboard_main.py instead
 
