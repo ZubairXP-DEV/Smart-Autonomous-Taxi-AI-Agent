@@ -3,7 +3,7 @@ Professional Dashboard using Plotly Dash for Smart Autonomous Taxi & Traffic Sys
 """
 
 import dash
-from dash import dcc, html, Input, Output, State, callback, callback_context
+from dash import dcc, html, Input, Output, State, callback, callback_context, no_update
 import dash_bootstrap_components as dbc
 import plotly.graph_objs as go
 import plotly.express as px
@@ -46,6 +46,7 @@ model_params = {
 model = None
 model_thread = None
 running = False
+simulation_speed = 5  # Default speed: matches slider default (5 = ~1.5s per step for better analysis)
 data_history = {
     'steps': [],
     'wait_times': [],
@@ -58,11 +59,15 @@ data_history = {
 
 def run_simulation():
     """Run simulation in background thread."""
-    global model, running
+    global model, running, simulation_speed
     running = True
     while running and model.running:
         model.step()
-        time.sleep(0.1)  # Control simulation speed
+        # Speed control: slider value 0-20 maps to 2.0s to 0.1s delay
+        # Lower slider = slower (more delay), Higher slider = faster (less delay)
+        delay = 2.0 - (simulation_speed * 0.095)  # Maps 0->2.0s, 20->0.1s
+        delay = max(0.1, min(2.0, delay))  # Clamp between 0.1s and 2.0s
+        time.sleep(delay)
 
 # Initialize model
 model = CityModel(**model_params)
@@ -119,10 +124,11 @@ app.layout = dbc.Container([
                                 min=0,
                                 max=20,
                                 step=1,
-                                value=10,
-                                marks={i: str(i) for i in range(0, 21, 5)},
-                                tooltip={"placement": "bottom", "always_visible": False}
-                            )
+                                value=5,  # Default to slower speed (5 = ~1.5s per step)
+                                marks={0: "Slow", 5: "Medium", 10: "Fast", 15: "Very Fast", 20: "Max"},
+                                tooltip={"placement": "bottom", "always_visible": True}
+                            ),
+                            html.Small(id="speed-display", className="text-muted ms-2")
                         ], width=True),
                         dbc.Col([
                             dbc.ButtonGroup([
@@ -358,8 +364,11 @@ app.layout = dbc.Container([
         id='interval-component',
         interval=500,  # Update every 500ms
         n_intervals=0,
-        disabled=False  # Always enabled, but only updates when running
+        disabled=True  # Will be enabled when simulation starts
     ),
+    
+    # Store for running state
+    dcc.Store(id='running-state-store', data=False),
     
     # Dummy outputs for button callbacks
     html.Div(id='dummy-output-step', style={'display': 'none'}),
@@ -453,11 +462,19 @@ app.index_string = '''
     Output('chart-density', 'figure'),
     Output('simulation-grid', 'figure'),
     Input('interval-component', 'n_intervals'),
+    Input('btn-step', 'n_clicks'),
     prevent_initial_call=False
 )
-def update_dashboard(n_intervals):
+def update_dashboard(n_intervals, step_clicks):
     """Update dashboard with current model state."""
     global model, data_history, running
+    
+    # Check if this is triggered by interval or step button
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        trigger_id = 'interval-component'
+    else:
+        trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
     
     try:
         # Always ensure n_intervals is valid
@@ -473,8 +490,8 @@ def update_dashboard(n_intervals):
                 empty_fig, empty_fig, empty_fig, empty_fig
             )
         
-        # Only update data history if simulation is running
-        should_update = running
+        # Only update data history if simulation is running or step was clicked
+        should_update = running or trigger_id == 'btn-step'
         
         from agents.taxi import Taxi
         from agents.passenger import Passenger
@@ -1007,13 +1024,13 @@ def update_dashboard(n_intervals):
         ),
         plot_bgcolor='#fafafa',
         paper_bgcolor='#ffffff',
-        title=dict(
-            text="<b>City Simulation Grid - Enhanced View</b>",
-            x=0.5,
-            xanchor='center',
-            font=dict(size=16, color='#111827', family='Arial'),
-            pad=dict(t=15, b=10)
-        ),
+        # title=dict(
+        #     text="<b>City Simulation Grid</b>",
+        #     x=0.5,
+        #     xanchor='center',
+        #     font=dict(size=16, color='#111827', family='Arial'),
+        #     pad=dict(t=15, b=10)
+        # ),
         hovermode='closest',
         modebar_remove=['lasso2d', 'select2d', 'autoScale2d', 'resetScale2d']
         )
@@ -1500,69 +1517,106 @@ def create_traffic_light_modal(light, is_open):
     
     return True, title, body, f"light_{light.unique_id}"
 
+# Combined callback for all simulation control buttons
 @app.callback(
     Output('dummy-output-start', 'children'),
-    Input('btn-start', 'n_clicks'),
-    prevent_initial_call=True
-)
-def start_simulation(n_clicks):
-    """Start simulation."""
-    global model_thread, running
-    try:
-        if n_clicks and not running:
-            running = True
-            model_thread = threading.Thread(target=run_simulation, daemon=True)
-            model_thread.start()
-    except:
-        pass
-    return ""
-
-@app.callback(
     Output('dummy-output-pause', 'children'),
-    Input('btn-pause', 'n_clicks'),
-    prevent_initial_call=True
-)
-def pause_simulation(n_clicks):
-    """Pause simulation."""
-    global running
-    try:
-        if n_clicks:
-            running = False
-    except:
-        pass
-    return ""
-
-@app.callback(
     Output('dummy-output-step', 'children'),
-    Input('btn-step', 'n_clicks'),
-    prevent_initial_call=True
-)
-def step_simulation(n_clicks):
-    """Step simulation."""
-    global model
-    try:
-        if n_clicks and model:
-            model.step()
-    except:
-        pass
-    return ""
-
-@app.callback(
     Output('dummy-output-reset', 'children'),
+    Output('running-state-store', 'data'),
+    Input('btn-start', 'n_clicks'),
+    Input('btn-pause', 'n_clicks'),
+    Input('btn-step', 'n_clicks'),
     Input('btn-reset', 'n_clicks'),
     prevent_initial_call=True
 )
-def reset_simulation(n_clicks):
-    """Reset simulation."""
-    global model, running, data_history
+def control_simulation(start_clicks, pause_clicks, step_clicks, reset_clicks):
+    """Handle all simulation control buttons in a single callback."""
+    global model, running, model_thread, data_history
+    
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return "", "", "", "", no_update
+    
+    trigger_id = ctx.triggered[0]['prop_id'].split('.')[0]
+    
     try:
-        if n_clicks:
-            running = False
-            model = CityModel(**model_params)
-            data_history = {key: [] for key in data_history}
-    except:
+        if trigger_id == 'btn-start':
+            if start_clicks and not running:
+                running = True
+                model_thread = threading.Thread(target=run_simulation, daemon=True)
+                model_thread.start()
+                return "", "", "", "", True  # Enable simulation
+            return "", "", "", "", no_update
+            
+        elif trigger_id == 'btn-pause':
+            if pause_clicks:
+                running = False
+                return "", "", "", "", False  # Disable simulation
+            return "", "", "", "", no_update
+            
+        elif trigger_id == 'btn-step':
+            if step_clicks and model:
+                model.step()
+                return "", "", "", "", no_update
+            return "", "", "", "", no_update
+            
+        elif trigger_id == 'btn-reset':
+            if reset_clicks:
+                running = False
+                model = CityModel(**model_params)
+                data_history = {key: [] for key in data_history}
+                return "", "", "", "", False  # Disable simulation and reset
+            return "", "", "", "", no_update
+    except Exception as e:
+        print(f"Error in control_simulation: {e}")
         pass
-    return ""
+    
+    return "", "", "", "", no_update
+
+# Single callback to control interval based on running state
+@app.callback(
+    Output('interval-component', 'disabled'),
+    Input('running-state-store', 'data'),
+    prevent_initial_call=True
+)
+def control_interval(is_running):
+    """Control interval component based on running state."""
+    if is_running is None or is_running is False:
+        return True  # Disabled when not running
+    return False  # Enabled when running
+
+# Callback to control simulation speed
+@app.callback(
+    Output('speed-display', 'children'),
+    Input('speed-slider', 'value'),
+    prevent_initial_call=False
+)
+def update_speed(speed_value):
+    """Update simulation speed based on slider value."""
+    global simulation_speed
+    if speed_value is None:
+        speed_value = 5
+    
+    simulation_speed = speed_value
+    
+    # Calculate delay for display
+    delay = 2.0 - (speed_value * 0.095)
+    delay = max(0.1, min(2.0, delay))
+    
+    # Display speed info
+    if speed_value <= 3:
+        speed_text = "Very Slow"
+    elif speed_value <= 7:
+        speed_text = "Slow"
+    elif speed_value <= 12:
+        speed_text = "Medium"
+    elif speed_value <= 17:
+        speed_text = "Fast"
+    else:
+        speed_text = "Very Fast"
+    
+    return f"({speed_text} - {delay:.2f}s/step)"
 
 # Advanced Features Callbacks
 
