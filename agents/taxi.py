@@ -57,6 +57,17 @@ class Taxi(Agent):
         """Find and pick up passengers (supports ride sharing and priority)."""
         from agents.passenger import Passenger
         
+        # First, identify which passengers are already assigned to other taxis
+        assigned_passenger_positions = set()
+        for other_agent in self.model.schedule.agents:
+            if isinstance(other_agent, Taxi) and other_agent != self:
+                # Check if this taxi is heading to a passenger
+                if other_agent.status == "picking_up" and hasattr(other_agent, 'path') and other_agent.path:
+                    # Get the destination of the path (where passenger is)
+                    pickup_dest = other_agent.path[-1] if other_agent.path else None
+                    if pickup_dest:
+                        assigned_passenger_positions.add(pickup_dest)
+        
         # Find passengers, prioritizing by:
         # 1. Priority level (emergency > VIP > regular)
         # 2. Distance
@@ -64,6 +75,10 @@ class Taxi(Agent):
         
         for agent in self.model.schedule.agents:
             if isinstance(agent, Passenger) and agent.status == "waiting":
+                # Check if this passenger is already assigned to another taxi
+                if agent.position in assigned_passenger_positions:
+                    continue  # Skip this passenger, already assigned
+                
                 if len(self.passengers) < self.capacity:  # Check capacity
                     distance = self._manhattan_distance(self.position, agent.position)
                     priority = getattr(agent, 'priority', 'regular')

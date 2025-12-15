@@ -345,7 +345,23 @@ app.layout = dbc.Container([
                 ])
             ], className="shadow-sm")
         ], width=12)
-    ]),
+    ], className="mb-4"),
+    
+    # Real-Time Heatmap Visualization
+    dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="bi bi-map me-2"),
+                    "Real-Time Demand Heatmap",
+                    html.Small(" (Passenger demand density across the city)", className="text-muted ms-2")
+                ]),
+                dbc.CardBody([
+                    dcc.Graph(id="heatmap-visualization", config={'displayModeBar': False})
+                ])
+            ], className="shadow-sm")
+        ], width=12)
+    ], className="mb-4"),
     
     # Agent Details Modal
     dbc.Modal([
@@ -1617,6 +1633,132 @@ def update_speed(speed_value):
         speed_text = "Very Fast"
     
     return f"({speed_text} - {delay:.2f}s/step)"
+
+# Real-Time Heatmap Visualization Callback
+@app.callback(
+    Output('heatmap-visualization', 'figure'),
+    Input('interval-component', 'n_intervals'),
+    Input('btn-step', 'n_clicks'),
+    prevent_initial_call=False
+)
+def update_heatmap(n_intervals, step_clicks):
+    """Generate real-time heatmap showing passenger demand density."""
+    global model
+    
+    # Create empty figure as default
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        template='plotly_white',
+        height=400,
+        xaxis_title="X Position",
+        yaxis_title="Y Position",
+        title="No data available"
+    )
+    
+    if model is None:
+        return empty_fig
+    
+    try:
+        from agents.passenger import Passenger
+        from agents.taxi import Taxi
+        
+        # Get model dimensions
+        width = model.width
+        height = model.height
+        
+        # Initialize density grid
+        demand_grid = np.zeros((height, width))
+        taxi_grid = np.zeros((height, width))
+        
+        # Collect passenger positions (waiting passengers = demand)
+        passengers = [a for a in model.schedule.agents if isinstance(a, Passenger)]
+        taxis = [a for a in model.schedule.agents if isinstance(a, Taxi)]
+        
+        # Count passengers at each grid cell (create demand heatmap)
+        for passenger in passengers:
+            if passenger.status == "waiting":
+                x, y = int(passenger.position[0]), int(passenger.position[1])
+                if 0 <= x < width and 0 <= y < height:
+                    # Weight by priority: Emergency=3, VIP=2, Regular=1
+                    priority_weight = {'emergency': 3, 'vip': 2, 'regular': 1}.get(
+                        getattr(passenger, 'priority', 'regular'), 1
+                    )
+                    demand_grid[y, x] += priority_weight
+        
+        # Count taxis at each grid cell (for reference)
+        for taxi in taxis:
+            x, y = int(taxi.position[0]), int(taxi.position[1])
+            if 0 <= x < width and 0 <= y < height:
+                taxi_grid[y, x] += 1
+        
+        # Create heatmap using Plotly
+        heatmap_fig = go.Figure()
+        
+        # Add demand heatmap (passenger waiting locations)
+        heatmap_fig.add_trace(go.Heatmap(
+            z=demand_grid,
+            x=list(range(width)),
+            y=list(range(height)),
+            colorscale='YlOrRd',  # Yellow-Orange-Red (hotter = more demand)
+            name='Passenger Demand',
+            colorbar=dict(
+                title="Demand Intensity"
+            ),
+            hovertemplate='<b>Location:</b> (%{x}, %{y})<br>' +
+                         '<b>Demand Intensity:</b> %{z}<br>' +
+                         '<extra></extra>',
+            showscale=True
+        ))
+        
+        # Add taxi overlay as scatter points (optional - shows taxi locations)
+        taxi_x = [t.position[0] for t in taxis]
+        taxi_y = [t.position[1] for t in taxis]
+        
+        if taxi_x:
+            heatmap_fig.add_trace(go.Scatter(
+                x=taxi_x,
+                y=taxi_y,
+                mode='markers',
+                marker=dict(
+                    symbol='square',
+                    size=8,
+                    color='cyan',
+                    line=dict(width=1, color='darkblue')
+                ),
+                name='Taxis',
+                hovertemplate='<b>Taxi Location:</b> (%{x}, %{y})<extra></extra>',
+                showlegend=True
+            ))
+        
+        # Update layout for professional appearance
+        heatmap_fig.update_layout(
+            template='plotly_white',
+            height=500,
+            xaxis=dict(
+                title="X Position",
+                range=[-0.5, width - 0.5],
+                scaleanchor="y",
+                scaleratio=1,
+                showgrid=True,
+                gridcolor='lightgray'
+            ),
+            yaxis=dict(
+                title="Y Position",
+                range=[-0.5, height - 0.5],
+                showgrid=True,
+                gridcolor='lightgray'
+            ),
+            margin=dict(l=60, r=20, t=40, b=50),
+            hovermode='closest',
+            showlegend=False
+        )
+        
+        return heatmap_fig
+        
+    except Exception as e:
+        # Return empty figure on error
+        empty_fig.update_layout(title=f"Error: {str(e)}")
+        return empty_fig
 
 # Advanced Features Callbacks
 
