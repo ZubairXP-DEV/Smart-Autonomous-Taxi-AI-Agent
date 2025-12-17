@@ -14,22 +14,13 @@ HOST = os.environ.get('HOST', '0.0.0.0')
 server = app.server
 
 if __name__ == '__main__':
-    print("=" * 60)
-    print("Smart Autonomous Taxi and Traffic System")
-    print("Professional Dashboard - Plotly Dash")
-    print("=" * 60)
-    print(f"Starting dashboard server on {HOST}:{PORT}...")
+    # print("=" * 60)
+    # print("=" * 60)
+    # print(f"Starting dashboard server on {HOST}:{PORT}...")
     
-    # Determine the URL to display
-    if HOST == '0.0.0.0':
-        print(f"Server accessible at: http://localhost:{PORT}")
-        print(f"Or from network: http://0.0.0.0:{PORT}")
-    else:
-        print(f"Open your browser to: http://{HOST}:{PORT}")
-    
-    print("=" * 60)
-    print("Press Ctrl+C to stop the server")
-    print("=" * 60)
+    # print("=" * 60)
+    # print("Press Ctrl+C to stop the server")
+    # print("=" * 60)
     
     # Run the app
     app.run(debug=False, port=PORT, host=HOST)
