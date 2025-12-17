@@ -664,4 +664,3 @@ Double-click `run_agent.bat` and enjoy watching your Smart Autonomous Taxi & Tra
 
 **License:** Open Source
 
-**Contributors:** Group Project (5 Members)
